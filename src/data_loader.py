@@ -13,6 +13,22 @@ EXPECTED_COLUMNS = [
     "trans_num", "unix_time", "merch_lat", "merch_long", "is_fraud"
 ]
 
+EXPECTED_SCHEMA = {
+    "trans_date_trans_time": "object",   # string before parsing
+    "amt":                   "float64",
+    "is_fraud":              "int64",
+    "lat":                   "float64",
+    "long":                  "float64",
+    "merch_lat":             "float64",
+    "merch_long":            "float64",
+    "city_pop":              "int64",
+    "gender":                "object",
+    "category":              "object",
+    "merchant":              "object",
+    "state":                 "object",
+    "job":                   "object",
+}
+
 def load_data(train_path: str, test_path: str):
     """
     Load raw train and test CSVs from disk.
@@ -41,6 +57,15 @@ def _validate(df: pd.DataFrame, path: str):
     missing = [c for c in EXPECTED_COLUMNS if c not in df.columns]
     if missing:
         raise ValueError(f"Missing columns in {path}: {missing}")
+
+    
+    for col, expected_type in EXPECTED_SCHEMA.items():
+        actual_type = str(df[col].dtype)
+        if actual_type != expected_type:
+            logger.warning(
+                f"Column '{col}' expected {expected_type}, got {actual_type}"
+            )
+    
     if df.empty:
         raise ValueError(f"File is empty: {path}")
     logger.info(f"Validation passed for {path}")
