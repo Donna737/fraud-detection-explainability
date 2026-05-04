@@ -11,7 +11,7 @@ TRAIN_PATH = os.path.join(DATA_DIR, "fraudTrain.csv")
 TEST_PATH  = os.path.join(DATA_DIR, "fraudTest.csv")
 
 HAS_REAL_DATA   = os.path.exists(TRAIN_PATH) and os.path.exists(TEST_PATH)
-HAS_REAL_MODELS = os.path.exists(os.path.join(MODELS_DIR, "model.pkl"))
+HAS_REAL_MODELS = os.path.exists(os.path.join(MODELS_DIR, "model.txt"))
 
 
 def make_mock_df(n=100) -> pd.DataFrame:
