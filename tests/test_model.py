@@ -57,34 +57,34 @@ class TestModelPrediction:
         return pd.DataFrame([np.zeros(len(cols))], columns=cols)
 
     def test_predict_proba_shape(self, model_artifacts):
-        """predict_proba must return shape (1, 2)."""
+        """predict must return shape (1,)."""
         X     = self._make_input(model_artifacts)
         proba = model_artifacts["model"].predict(X)
         assert proba.shape == (1,), f"Unexpected shape: {proba.shape}"
 
     def test_predict_proba_sums_to_one(self, model_artifacts):
-        """Class probabilities must sum to 1."""
+        """Fraud probability must be between 0 and 1."""
         X     = self._make_input(model_artifacts)
-        proba = model_artifacts["model"].predict_proba(X)
+        proba = model_artifacts["model"].predict(X)
         assert 0.0 <= float(proba[0]) <= 1.0
 
     def test_fraud_probability_in_range(self, model_artifacts):
         """Fraud probability must be between 0 and 1."""
         X    = self._make_input(model_artifacts)
-        prob = float(model_artifacts["model"].predict_proba(X)[:, 1][0])
+        prob = float(model_artifacts["model"].predict(X)[0])
         assert 0.0 <= prob <= 1.0, f"Probability {prob} out of range"
 
     def test_prediction_is_deterministic(self, model_artifacts):
         """Same input must always produce same output."""
         X     = self._make_input(model_artifacts)
-        prob1 = float(model_artifacts["model"].predict_proba(X)[:, 1][0])
-        prob2 = float(model_artifacts["model"].predict_proba(X)[:, 1][0])
+        prob1 = float(model_artifacts["model"].predict(X)[0])
+        prob2 = float(model_artifacts["model"].predict(X)[0])
         assert prob1 == prob2, "Model is not deterministic"
 
     def test_threshold_produces_binary_prediction(self, model_artifacts):
         """Applying threshold must produce 0 or 1."""
         X         = self._make_input(model_artifacts)
-        prob      = float(model_artifacts["model"].predict_proba(X)[:, 1][0])
+        prob      = float(model_artifacts["model"].predict(X)[0])
         threshold = model_artifacts["threshold"]
         prediction = int(prob >= threshold)
         assert prediction in {0, 1}
