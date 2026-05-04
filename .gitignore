@@ -2,6 +2,10 @@
 data/*
 !data/.gitkeep
 
+.DS_Store
+**/.DS_Store
+models/model.pkl
+
 #MLflow
 mlruns/
 
