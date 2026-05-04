@@ -3,6 +3,7 @@ import pytest
 import numpy as np
 import pandas as pd
 import joblib
+import lightgbm as lgb
 import os
 import sys
 
@@ -17,7 +18,7 @@ def model_artifacts(models_available):
     if not models_available:
         pytest.skip("Model artifacts not found — skipping model tests")
     return {
-        "model":          joblib.load(f"{MODELS_DIR}/model.pkl"),
+        "model":          lgb.Booster(model_file=f"{MODELS_DIR}/model.txt"),
         "threshold":      joblib.load(f"{MODELS_DIR}/threshold.pkl"),
         "encoders":       joblib.load(f"{MODELS_DIR}/encoders.pkl"),
         "category_stats": joblib.load(f"{MODELS_DIR}/category_stats.pkl"),
@@ -58,14 +59,14 @@ class TestModelPrediction:
     def test_predict_proba_shape(self, model_artifacts):
         """predict_proba must return shape (1, 2)."""
         X     = self._make_input(model_artifacts)
-        proba = model_artifacts["model"].predict_proba(X)
-        assert proba.shape == (1, 2), f"Unexpected shape: {proba.shape}"
+        proba = model_artifacts["model"].predict(X)
+        assert proba.shape == (1,), f"Unexpected shape: {proba.shape}"
 
     def test_predict_proba_sums_to_one(self, model_artifacts):
         """Class probabilities must sum to 1."""
         X     = self._make_input(model_artifacts)
         proba = model_artifacts["model"].predict_proba(X)
-        assert abs(proba[0].sum() - 1.0) < 1e-6
+        assert 0.0 <= float(proba[0]) <= 1.0
 
     def test_fraud_probability_in_range(self, model_artifacts):
         """Fraud probability must be between 0 and 1."""
