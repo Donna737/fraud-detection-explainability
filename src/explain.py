@@ -354,20 +354,20 @@ def print_fraud_alert(
         print(f"  FRAUD ALERT  │  Transaction #{idx}  │  {row['predicted_prob']:.0%} confidence")
         print(f"{'─'*62}")
 
-        print(f"\n  📋 TRANSACTION")
+        print("\n  📋 TRANSACTION")
         print(f"     ${row['amt']:.2f}  at  {merchant}  ({category})")
         print(f"     {day} {int(row['hour'])}:00 ({timing})  •  {row['distance_km']:.1f} km from home")
 
-        print(f"\n  👤 CARDHOLDER")
+        print("\n  👤 CARDHOLDER")
         print(f"     {int(row['age'])} y/o  •  {row.get('job_original', 'unknown')}")
         print(f"     {row.get('state_original', 'unknown')}  •  {row.get('gender_original', 'unknown')}")
 
-        print(f"\n  📊 EXPLANATION")
+        print("\n  📊 EXPLANATION")
         print(f"     {wf_path}")
-        print(f"     Each bar shows how much that feature pushed")
-        print(f"     the fraud score up (red) or down (blue).")
+        print("     Each bar shows how much that feature pushed")
+        print("     the fraud score up (red) or down (blue).")
 
-        print(f"\n  ⚠️  Recommendation: Contact cardholder to verify.")
+        print("\n  ⚠️  Recommendation: Contact cardholder to verify.")
         print(f"{'─'*62}")
 
 

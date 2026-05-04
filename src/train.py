@@ -177,7 +177,7 @@ def compare_thresholds(
 
     comparison = pd.DataFrame(
         [metrics_default, metrics_tuned],
-        index=[f"Default (0.50)", f"Tuned ({chosen_threshold:.2f})"]
+        index=["Default (0.50)", f"Tuned ({chosen_threshold:.2f})"]
     )
     print("\n── Threshold Comparison (on test set) ──")
     print(comparison.round(3))
@@ -256,7 +256,7 @@ def plot_confusion_matrix(
     for ax, threshold, title in zip(
         axes,
         [0.5, chosen_threshold],
-        [f"Default Threshold (0.50)", f"Tuned Threshold ({chosen_threshold:.2f})"]
+        ["Default Threshold (0.50)", f"Tuned Threshold ({chosen_threshold:.2f})"]
     ):
         y_pred = (y_prob >= threshold).astype(int)
         cm     = confusion_matrix(y_true, y_pred)
