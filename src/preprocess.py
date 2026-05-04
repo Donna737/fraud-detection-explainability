@@ -1,5 +1,7 @@
 # src/preprocess.py
 import logging
+import os
+import joblib
 import numpy as np
 import pandas as pd
 from geopy.distance import geodesic
@@ -26,11 +28,12 @@ DROP_AFTER_ENGINEERING = [
     "city",                                      # too many unique values
 ]
 
-# columns we encode (keep originals for explaination)
+# columns we encode (keep originals for explanation)
 CAT_COLS = ["merchant", "category", "gender", "state", "job"]
 
 # target + columns to exclude from feature matrix
-TARGET = "is_fraud"
+TARGET  = "is_fraud"
+MODELS_DIR = "models"
 
 
 # ── Individual steps ───────────────────────────────────────────────────────────
@@ -39,7 +42,7 @@ def drop_identity_columns(train_df: pd.DataFrame, test_df: pd.DataFrame):
     """Drop columns that are identifiers or would cause data leakage."""
     logger.info("Dropping identity columns...")
     train_df = train_df.drop(columns=DROP_IDENTITY_COLS, errors="ignore")
-    test_df = test_df.drop(columns=DROP_IDENTITY_COLS, errors="ignore")
+    test_df  = test_df.drop(columns=DROP_IDENTITY_COLS, errors="ignore")
     return train_df, test_df
 
 
@@ -106,6 +109,9 @@ def extract_amount_features(train_df: pd.DataFrame, test_df: pd.DataFrame):
     Log-transform amount and compute z-score within merchant category.
     A $500 grocery charge vs $500 electronics charge have very different
     fraud implications — the z-score captures this.
+
+    Returns category_stats so the API can reuse it for single transactions
+    without needing access to the training data.
     """
     logger.info("Extracting amount features...")
 
@@ -128,7 +134,8 @@ def extract_amount_features(train_df: pd.DataFrame, test_df: pd.DataFrame):
             (df["amt"] - df["cat_amt_mean"]) / (df["cat_amt_std"] + 1e-8)
         )
 
-    return train_df, test_df
+    # ── return category_stats so run_preprocessing() can save it ──
+    return train_df, test_df, category_stats
 
 
 def extract_city_pop(train_df: pd.DataFrame, test_df: pd.DataFrame):
@@ -177,7 +184,7 @@ def build_feature_matrix(train_df: pd.DataFrame, test_df: pd.DataFrame):
     """
     logger.info("Building feature matrix...")
 
-    exclude = [TARGET, "amt"] + [f"{col}_original" for col in CAT_COLS]
+    exclude  = [TARGET, "amt"] + [f"{col}_original" for col in CAT_COLS]
     features = [col for col in train_df.columns if col not in exclude]
 
     X_train = train_df[features]
@@ -192,6 +199,32 @@ def build_feature_matrix(train_df: pd.DataFrame, test_df: pd.DataFrame):
     return X_train, y_train, X_test, y_test, features
 
 
+# ── API artifact saving ────────────────────────────────────────────────────────
+
+def save_api_artifacts(encoders: dict, category_stats: pd.DataFrame, features: list):
+    """
+    Save everything the API needs to preprocess a single raw transaction.
+
+    Why each artifact is needed:
+        encoders        — to encode category/gender/state etc. the same way as training
+                          without these the model gets wrong integer codes
+        category_stats  — to compute amt_zscore_by_category for a new transaction
+                          (mean and std per category, fitted on training data)
+        train_columns   — exact feature column order the model expects
+                          wrong order = completely wrong predictions, silently
+    """
+    os.makedirs(MODELS_DIR, exist_ok=True)
+
+    joblib.dump(encoders,       f"{MODELS_DIR}/encoders.pkl")
+    joblib.dump(category_stats, f"{MODELS_DIR}/category_stats.pkl")
+    joblib.dump(features,       f"{MODELS_DIR}/train_columns.pkl")
+
+    logger.info("API artifacts saved:")
+    logger.info(f"  {MODELS_DIR}/encoders.pkl")
+    logger.info(f"  {MODELS_DIR}/category_stats.pkl")
+    logger.info(f"  {MODELS_DIR}/train_columns.pkl")
+
+
 # ── Main pipeline function ─────────────────────────────────────────────────────
 
 def run_preprocessing(train_df: pd.DataFrame, test_df: pd.DataFrame):
@@ -201,22 +234,25 @@ def run_preprocessing(train_df: pd.DataFrame, test_df: pd.DataFrame):
     Returns:
         X_train, y_train, X_test, y_test  — feature matrices and targets
         encoders                           — fitted LabelEncoders (needed for API)
-        test_df                            — test df with original string columns 
+        test_df                            — test df with original string columns
         features                           — list of feature names
     """
     logger.info("=== Starting preprocessing pipeline ===")
 
-    train_df, test_df = drop_identity_columns(train_df, test_df)
-    train_df, test_df = save_original_categoricals(train_df, test_df)
-    train_df, test_df = extract_time_features(train_df, test_df)
-    train_df, test_df = extract_age(train_df, test_df)
-    train_df, test_df = extract_distance(train_df, test_df)
-    train_df, test_df = extract_amount_features(train_df, test_df)
-    train_df, test_df = extract_city_pop(train_df, test_df)
-    train_df, test_df, encoders = encode_categoricals(train_df, test_df)
-    train_df, test_df = drop_intermediate_columns(train_df, test_df)
+    train_df, test_df                    = drop_identity_columns(train_df, test_df)
+    train_df, test_df                    = save_original_categoricals(train_df, test_df)
+    train_df, test_df                    = extract_time_features(train_df, test_df)
+    train_df, test_df                    = extract_age(train_df, test_df)
+    train_df, test_df                    = extract_distance(train_df, test_df)
+    train_df, test_df, category_stats    = extract_amount_features(train_df, test_df)  # ← now returns category_stats
+    train_df, test_df                    = extract_city_pop(train_df, test_df)
+    train_df, test_df, encoders          = encode_categoricals(train_df, test_df)
+    train_df, test_df                    = drop_intermediate_columns(train_df, test_df)
 
     X_train, y_train, X_test, y_test, features = build_feature_matrix(train_df, test_df)
+
+    # ── save API artifacts ──
+    save_api_artifacts(encoders, category_stats, features)
 
     logger.info("=== Preprocessing complete ===")
     return X_train, y_train, X_test, y_test, encoders, test_df, features

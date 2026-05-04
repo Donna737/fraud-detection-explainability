@@ -1,0 +1,5 @@
+,merchant,category,gender,state,job,hour,day_of_week,month,is_weekend,is_night,age,distance_km,amt_log,amt_zscore_by_category,city_pop_log,predicted_prob,predicted_class,actual,amt,category_original,merchant_original,job_original,state_original,gender_original
+338205,466,4,0,35,156,0,3,10,0,1,37,86.38119900929226,5.875239671888878,4.47527681398995,7.8804263442924,0.999671402550052,1,1,355.11,grocery_pos,"fraud_Osinski, Ledner and Leuschke","Engineer, biomedical",OH,F
+405025,72,11,0,25,410,22,4,11,0,1,54,108.29880414536076,6.889407992164077,3.609642554576908,10.112369894498068,0.9999034325607423,1,1,980.82,shopping_net,fraud_Boyer-Reichert,"Scientist, clinical (histocompatibility and immunogenetics)",MS,F
+425220,42,12,1,0,95,23,2,12,0,1,23,114.16406803943326,7.07743898009447,4.769815860035112,7.560601162768557,0.9947542244557639,1,1,1183.93,shopping_pos,fraud_Beier-Hyatt,Commissioning editor,AK,M
+56694,137,9,0,19,385,3,5,7,1,1,46,50.86731771639669,6.44706811637375,4.204650641385932,7.660114319173928,0.9688546205036597,1,1,629.85,misc_pos,fraud_Dickinson-Rempel,Radio producer,MA,F

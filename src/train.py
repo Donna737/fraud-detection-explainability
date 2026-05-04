@@ -9,6 +9,7 @@ import seaborn as sns
 import mlflow
 import mlflow.lightgbm
 import lightgbm as lgb
+from sklearn.model_selection import train_test_split
 from sklearn.metrics import (
     precision_recall_curve, auc,
     precision_score, recall_score,
@@ -30,12 +31,45 @@ MODEL_PARAMS = {
 
 # business decision: catch at least 80% of fraud (min recall)
 # then maximize precision at that point to reduce false alarms
-MIN_RECALL   = 0.80
-OUTPUTS_DIR  = "outputs"
-MODELS_DIR   = "models"
+MIN_RECALL  = 0.90
+VAL_SIZE    = 0.2     # 20% of train set used for threshold selection
+OUTPUTS_DIR = "outputs"
+MODELS_DIR  = "models"
 
 
 # ── Training ───────────────────────────────────────────────────────────────────
+
+def split_train_val(
+    X_train: pd.DataFrame,
+    y_train: pd.Series,
+    val_size: float = VAL_SIZE
+):
+    """
+    Split training data into train and validation sets.
+
+    Why stratify:
+        Fraud rate is ~0.5% — without stratify, your validation set
+        might randomly end up with very few fraud cases, making
+        threshold selection unreliable.
+
+    Why we need this split at all:
+        Threshold selection must happen on data the model hasn't
+        been trained on, but the final test set should only be
+        touched once for honest evaluation. The validation set
+        is the correct place to tune the threshold.
+    """
+    X_tr, X_val, y_tr, y_val = train_test_split(
+        X_train, y_train,
+        test_size=val_size,
+        random_state=42,
+        stratify=y_train       # preserve fraud rate in both splits
+    )
+
+    logger.info(f"Train:      {X_tr.shape}  | fraud rate: {y_tr.mean():.4f}")
+    logger.info(f"Validation: {X_val.shape} | fraud rate: {y_val.mean():.4f}")
+
+    return X_tr, X_val, y_tr, y_val
+
 
 def train_model(X_train: pd.DataFrame, y_train: pd.Series) -> lgb.LGBMClassifier:
     """
@@ -61,32 +95,45 @@ def train_model(X_train: pd.DataFrame, y_train: pd.Series) -> lgb.LGBMClassifier
 # ── Threshold selection ────────────────────────────────────────────────────────
 
 def select_threshold(
-    y_test: pd.Series,
-    y_prob: np.ndarray,
+    y_val: pd.Series,
+    y_val_prob: np.ndarray,
     min_recall: float = MIN_RECALL
-) -> tuple[float, float]:
+):
     """
-    Business-driven threshold selection:
-    Find the threshold that maximizes precision while keeping recall >= min_recall.
+    Business-driven threshold selection on the VALIDATION set.
 
-    In fraud detection, missing fraud (low recall) is more costly than
-    a false alarm, so we set a recall floor and optimize precision above it.
+    Find the threshold that maximizes precision while keeping
+    recall >= min_recall.
+
+    Why validation and not test:
+        We're searching over many thresholds and picking the best one —
+        that's a form of optimization. Doing it on the test set would
+        make our final metrics optimistic. The validation set is used
+        for this tuning step; the test set is only touched once at the end.
 
     Returns:
-        chosen_threshold  — the selected operating threshold
-        pr_auc            — area under the precision-recall curve
+        threshold   — the chosen operating threshold
+        pr_auc      — area under the precision-recall curve (on val)
+        precisions, recalls, thresholds — full curve for plotting
     """
-    logger.info(f"Selecting threshold (min recall = {min_recall})...")
+    logger.info(f"Selecting threshold on validation set (min recall = {min_recall})...")
 
-    precisions, recalls, thresholds = precision_recall_curve(y_test, y_prob)
+    precisions, recalls, thresholds = precision_recall_curve(y_val, y_val_prob)
     pr_auc = auc(recalls, precisions)
 
-    valid_mask  = recalls[:-1] >= min_recall
-    best_idx    = np.argmax(precisions[:-1][valid_mask])
-    threshold   = thresholds[valid_mask][best_idx]
+    valid_mask = recalls[:-1] >= min_recall
+    if not valid_mask.any():
+        logger.warning(
+            f"No threshold achieves recall >= {min_recall}. "
+            "Relaxing to best available recall."
+        )
+        valid_mask = np.ones(len(thresholds), dtype=bool)
 
-    logger.info(f"PR-AUC:           {pr_auc:.3f}")
-    logger.info(f"Chosen threshold: {threshold:.3f}")
+    best_idx  = np.argmax(precisions[:-1][valid_mask])
+    threshold = thresholds[valid_mask][best_idx]
+
+    logger.info(f"Validation PR-AUC:  {pr_auc:.3f}")
+    logger.info(f"Chosen threshold:   {threshold:.3f}")
 
     return threshold, pr_auc, precisions, recalls, thresholds
 
@@ -94,21 +141,21 @@ def select_threshold(
 # ── Evaluation ─────────────────────────────────────────────────────────────────
 
 def evaluate(
-    y_test: pd.Series,
+    y_true: pd.Series,
     y_prob: np.ndarray,
     threshold: float,
     label: str = "tuned"
-) -> dict:
+) -> tuple[dict, np.ndarray]:
     """
     Compute precision, recall, F1 at a given threshold.
-    Returns a dict of metrics (easy to log to MLflow).
+    Returns a dict of metrics and the predictions array.
     """
     y_pred = (y_prob >= threshold).astype(int)
 
     metrics = {
-        "precision": precision_score(y_test, y_pred),
-        "recall":    recall_score(y_test, y_pred),
-        "f1":        f1_score(y_test, y_pred),
+        "precision": precision_score(y_true, y_pred),
+        "recall":    recall_score(y_true, y_pred),
+        "f1":        f1_score(y_true, y_pred),
         "threshold": threshold,
     }
 
@@ -120,19 +167,19 @@ def evaluate(
 
 
 def compare_thresholds(
-    y_test: pd.Series,
+    y_true: pd.Series,
     y_prob: np.ndarray,
     chosen_threshold: float
 ) -> pd.DataFrame:
     """Compare default (0.5) vs business-tuned threshold side by side."""
-    metrics_default, _ = evaluate(y_test, y_prob, threshold=0.5,              label="default")
-    metrics_tuned,   _ = evaluate(y_test, y_prob, threshold=chosen_threshold, label="tuned")
+    metrics_default, _ = evaluate(y_true, y_prob, threshold=0.5,              label="default")
+    metrics_tuned,   _ = evaluate(y_true, y_prob, threshold=chosen_threshold, label="tuned")
 
     comparison = pd.DataFrame(
         [metrics_default, metrics_tuned],
         index=[f"Default (0.50)", f"Tuned ({chosen_threshold:.2f})"]
     )
-    print("\n── Threshold Comparison ──")
+    print("\n── Threshold Comparison (on test set) ──")
     print(comparison.round(3))
     return comparison
 
@@ -143,6 +190,7 @@ def plot_pr_curve(
     precisions, recalls, thresholds,
     chosen_threshold: float,
     pr_auc: float,
+    title_suffix: str = "Validation Set",
     save_path: str = None
 ):
     """Precision-Recall curve with chosen threshold marked."""
@@ -168,7 +216,7 @@ def plot_pr_curve(
 
     ax.set_xlabel("Recall")
     ax.set_ylabel("Precision")
-    ax.set_title("Precision-Recall Curve")
+    ax.set_title(f"Precision-Recall Curve ({title_suffix})")
     ax.legend()
     ax.grid(alpha=0.3)
 
@@ -183,7 +231,7 @@ def plot_pr_curve(
                label=f"Chosen = {chosen_threshold:.2f}")
     ax.set_xlabel("Threshold")
     ax.set_ylabel("F1 Score")
-    ax.set_title("F1 Score vs Threshold")
+    ax.set_title(f"F1 Score vs Threshold ({title_suffix})")
     ax.legend()
     ax.grid(alpha=0.3)
 
@@ -197,12 +245,12 @@ def plot_pr_curve(
 
 
 def plot_confusion_matrix(
-    y_test: pd.Series,
+    y_true: pd.Series,
     y_prob: np.ndarray,
     chosen_threshold: float,
     save_path: str = None
 ):
-    """Side-by-side confusion matrices for default vs tuned threshold."""
+    """Side-by-side confusion matrices: default (0.5) vs tuned threshold."""
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 
     for ax, threshold, title in zip(
@@ -211,7 +259,7 @@ def plot_confusion_matrix(
         [f"Default Threshold (0.50)", f"Tuned Threshold ({chosen_threshold:.2f})"]
     ):
         y_pred = (y_prob >= threshold).astype(int)
-        cm     = confusion_matrix(y_test, y_pred)
+        cm     = confusion_matrix(y_true, y_pred)
         cm_pct = cm.astype(float) / cm.sum(axis=1, keepdims=True) * 100
 
         labels = np.array([
@@ -240,7 +288,8 @@ def save_model(model, threshold: float, features: list):
     """Save model, threshold, and feature list to disk."""
     os.makedirs(MODELS_DIR, exist_ok=True)
 
-    joblib.dump(model,    f"{MODELS_DIR}/model.pkl")
+    # save LightGBM model in native format — platform independent, no pickle
+    model.booster_.save_model(f"{MODELS_DIR}/model.txt")
     joblib.dump(threshold, f"{MODELS_DIR}/threshold.pkl")
     joblib.dump(features,  f"{MODELS_DIR}/features.pkl")
 
@@ -257,8 +306,12 @@ def run_training(
     features: list
 ):
     """
-    Full training pipeline with MLflow tracking.
-    Call this from pipeline.py or standalone.
+    Full training pipeline with proper train / val / test separation:
+
+        X_train  →  split into X_tr (fit model) + X_val (select threshold)
+        X_test   →  final honest evaluation only, never touched before this step
+
+    MLflow tracks everything: params, val metrics, test metrics, artifacts.
     """
     os.makedirs(OUTPUTS_DIR, exist_ok=True)
 
@@ -267,36 +320,53 @@ def run_training(
         # ── log parameters ──
         mlflow.log_params(MODEL_PARAMS)
         mlflow.log_param("min_recall_floor", MIN_RECALL)
-        mlflow.log_param("n_features", len(features))
+        mlflow.log_param("val_size",         VAL_SIZE)
+        mlflow.log_param("n_features",       len(features))
 
-        # ── train ──
-        model  = train_model(X_train, y_train)
-        y_prob = model.predict_proba(X_test)[:, 1]
+        # ── split train → train + val ──
+        X_tr, X_val, y_tr, y_val = split_train_val(X_train, y_train)
 
-        # ── threshold selection ──
-        threshold, pr_auc, precisions, recalls, thresholds = select_threshold(
-            y_test, y_prob, min_recall=MIN_RECALL
+        # ── fit model on train only ──
+        model = train_model(X_tr, y_tr)
+
+        # ── select threshold on validation set ──
+        y_val_prob = model.predict_proba(X_val)[:, 1]
+        threshold, pr_auc_val, precisions, recalls, thresholds = select_threshold(
+            y_val, y_val_prob, min_recall=MIN_RECALL
         )
 
-        # ── evaluate ──
-        metrics, _ = evaluate(y_test, y_prob, threshold)
-        compare_thresholds(y_test, y_prob, threshold)
+        # log validation metrics
+        val_metrics, _ = evaluate(y_val, y_val_prob, threshold, label="val")
+        mlflow.log_metric("val_pr_auc",    pr_auc_val)
+        mlflow.log_metric("val_precision", val_metrics["precision"])
+        mlflow.log_metric("val_recall",    val_metrics["recall"])
+        mlflow.log_metric("val_f1",        val_metrics["f1"])
+        mlflow.log_metric("threshold",     threshold)
 
-        # ── log metrics to MLflow ──
-        mlflow.log_metric("pr_auc",    pr_auc)
-        mlflow.log_metric("precision", metrics["precision"])
-        mlflow.log_metric("recall",    metrics["recall"])
-        mlflow.log_metric("f1",        metrics["f1"])
-        mlflow.log_metric("threshold", threshold)
-
-        # ── plots ──
+        # ── PR curve plot (from validation — where threshold was chosen) ──
         pr_path = f"{OUTPUTS_DIR}/pr_curve.png"
-        cm_path = f"{OUTPUTS_DIR}/confusion_matrix.png"
-
-        plot_pr_curve(precisions, recalls, thresholds, threshold, pr_auc, save_path=pr_path)
-        plot_confusion_matrix(y_test, y_prob, threshold, save_path=cm_path)
-
+        plot_pr_curve(
+            precisions, recalls, thresholds,
+            threshold, pr_auc_val,
+            title_suffix="Validation Set",
+            save_path=pr_path
+        )
         mlflow.log_artifact(pr_path)
+
+        # ── final honest evaluation on test set ──
+        # this is the first and only time we touch X_test
+        logger.info("\n=== Final evaluation on held-out test set ===")
+        y_test_prob = model.predict_proba(X_test)[:, 1]
+        test_metrics, _ = evaluate(y_test, y_test_prob, threshold, label="test")
+        compare_thresholds(y_test, y_test_prob, threshold)
+
+        mlflow.log_metric("test_precision", test_metrics["precision"])
+        mlflow.log_metric("test_recall",    test_metrics["recall"])
+        mlflow.log_metric("test_f1",        test_metrics["f1"])
+
+        # ── confusion matrix (on test set) ──
+        cm_path = f"{OUTPUTS_DIR}/confusion_matrix.png"
+        plot_confusion_matrix(y_test, y_test_prob, threshold, save_path=cm_path)
         mlflow.log_artifact(cm_path)
 
         # ── save model ──
@@ -305,7 +375,8 @@ def run_training(
 
         logger.info("=== Training run complete ===")
 
-    return model, threshold, y_prob
+    # return test probabilities — explain.py needs these
+    return model, threshold, y_test_prob
 
 
 # ── Run standalone ─────────────────────────────────────────────────────────────
@@ -314,8 +385,8 @@ if __name__ == "__main__":
     import sys
     sys.path.append("src")
 
-    from data_loader  import load_data
-    from preprocess   import run_preprocessing
+    from data_loader import load_data
+    from preprocess  import run_preprocessing
 
     train_df, test_df = load_data(
         train_path="data/fraudTrain.csv",

@@ -1,0 +1,13 @@
+services:
+  streamlit:
+    build: .
+    platform: linux/amd64
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+      - ./outputs:/app/outputs
+      - ./mlflow.db:/app/mlflow.db
+    environment:
+      - PYTHONUNBUFFERED=1
