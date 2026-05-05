@@ -1,6 +1,7 @@
 #data
 data/*
 !data/.gitkeep
+!data/sample.csv
 
 .DS_Store
 **/.DS_Store

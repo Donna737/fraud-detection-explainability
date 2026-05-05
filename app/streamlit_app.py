@@ -222,6 +222,8 @@ def load_mlflow_metrics():
 @st.cache_data
 def load_raw_sample():
     path = os.path.join(DATA_DIR, "fraudTrain.csv")
+    if not os.path.exists(path):
+        path = os.path.join(DATA_DIR, "sample.csv")
     if os.path.exists(path):
         df = pd.read_csv(path, nrows=50000)
         df["trans_date_trans_time"] = pd.to_datetime(df["trans_date_trans_time"])
