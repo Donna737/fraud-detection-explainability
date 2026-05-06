@@ -674,6 +674,7 @@ elif page == "04 · Try It Yourself":
 
     st.markdown("<br>", unsafe_allow_html=True)
     predict_btn = st.button("🔍 Predict", type="primary", use_container_width=False)
+    st.caption("💡 Default values are a real fraud case from the test set (100% confidence). Try changing the hour to 10:00 or the amount to $20 to see the score drop.")
 
     if predict_btn:
         try:
