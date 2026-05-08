@@ -82,8 +82,8 @@ Raw CSVs (fraudTrain.csv, fraudTest.csv)
 
 | Threshold | Precision | Recall | F1 |
 |-----------|-----------|--------|----|
-| Default (0.50) | ~0.75 | ~0.92 | ~0.83 |
-| Tuned (0.90) | ~0.91 | ~0.90 | ~0.90 |
+| Default (0.50) | 0.427 | 0.909 | 0.581 |
+| Tuned (0.902)  | 0.797 | 0.807 | 0.802 |
 
 ### How the threshold was selected
 

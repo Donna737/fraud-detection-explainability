@@ -211,11 +211,11 @@ def load_mlflow_metrics():
         return metrics_df.groupby("key")["value"].first().to_dict()
     except Exception:
         return {
-            "test_precision": 0.91,
-            "test_recall":    0.90,
-            "test_f1":        0.905,
-            "val_pr_auc":     0.94,
-            "threshold":      0.90,
+            "test_precision": 0.797,
+            "test_recall":    0.807,
+            "test_f1":        0.802,
+            "val_pr_auc":     0.939,
+            "threshold":      0.902,
         }
 
 
@@ -321,32 +321,33 @@ if page == "01 · Overview":
         </div>""", unsafe_allow_html=True)
 
     with c2:
-        recall = metrics.get("test_recall", 0.90)
+        recall = metrics.get("test_recall", 0.807)
         st.markdown(f"""
         <div class="metric-card">
             <div class="metric-label">Fraud Recall</div>
-            <div class="metric-value">{recall:.0%}</div>
+            <div class="metric-value">{recall:.1%}</div>
             <div class="metric-delta">↑ vs 0% baseline (no model)</div>
         </div>""", unsafe_allow_html=True)
 
     with c3:
-        precision = metrics.get("test_precision", 0.91)
+        precision = metrics.get("test_precision", 0.797)
+        false_alarm = round((1 - precision) * 10)
         st.markdown(f"""
         <div class="metric-card">
             <div class="metric-label">Precision</div>
-            <div class="metric-value">{precision:.0%}</div>
-            <div class="metric-delta">↑ 1 in 10 alerts is a false alarm</div>
+            <div class="metric-value">{precision:.1%}</div>
+            <div class="metric-delta">↑ {false_alarm} in 10 alerts is a false alarm</div>
         </div>""", unsafe_allow_html=True)
 
     with c4:
-        pr_auc = metrics.get("val_pr_auc", 0.94)
+        pr_auc = metrics.get("val_pr_auc", 0.939)
         st.markdown(f"""
         <div class="metric-card">
             <div class="metric-label">PR-AUC</div>
             <div class="metric-value">{pr_auc:.2f}</div>
             <div class="metric-delta">↑ validation set</div>
         </div>""", unsafe_allow_html=True)
-
+        
     st.markdown("<hr class='divider'>", unsafe_allow_html=True)
 
     col1, col2 = st.columns([3, 2])
