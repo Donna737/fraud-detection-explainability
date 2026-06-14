@@ -78,12 +78,22 @@ Raw CSVs (fraudTrain.csv, fraudTest.csv)
 
 ## Results
 
+### Model Comparison (both at default threshold 0.50)
+
+| Model | Precision | Recall | F1 |
+|-------|-----------|--------|----|
+| Logistic Regression (baseline) | 0.018 | 0.761 | 0.035 |
+| LightGBM | 0.427 | 0.909 | 0.581 |
+
+Logistic regression recall is reasonable but precision collapses to near zero — it casts a wide net because it can only draw a linear decision boundary. Fraud patterns require non-linear modeling: the interaction between distance, time, and amount cannot be captured by a weighted sum.
+
 ### Threshold Comparison (Test Set)
 
 | Threshold | Precision | Recall | F1 |
 |-----------|-----------|--------|----|
 | Default (0.50) | 0.427 | 0.909 | 0.581 |
 | Tuned (0.902)  | 0.797 | 0.807 | 0.802 |
+
 
 ### How the threshold was selected
 
@@ -287,11 +297,15 @@ fraud-detection-explainability/
 │   ├── threshold.pkl        # chosen operating threshold
 │   ├── encoders.pkl         # fitted LabelEncoders
 │   ├── category_stats.pkl   # per-category amount stats
-│   └── train_columns.pkl    # feature column order
+│   ├── train_columns.pkl    # feature column order
+│   ├── lr_model.pkl         # logistic regression baseline
+│   └── lr_scaler.pkl        # StandardScaler for baseline
 │
 ├── outputs/                 # generated plots (committed to repo)
 │   ├── pr_curve.png
 │   ├── confusion_matrix.png
+│   ├── roc_pr_comparison.png  # ROC-AUC vs PR-AUC comparison
+│   ├── model_comparison.png   # LightGBM vs logistic regression
 │   ├── shap_summary.png
 │   ├── shap_bar.png
 │   └── waterfall_case_1-4.png
