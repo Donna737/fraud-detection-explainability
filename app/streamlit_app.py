@@ -233,7 +233,6 @@ def load_raw_sample():
         df["age"]         = (df["trans_date_trans_time"] - df["dob"]).dt.days // 365
         return df
 
-    # demo fallback
     np.random.seed(42)
     n = 5000
     return pd.DataFrame({
@@ -252,7 +251,6 @@ def load_raw_sample():
 def load_model_artifacts():
     try:
         import lightgbm as lgb
-        # load LightGBM model from native format
         booster        = lgb.Booster(model_file=f"{MODELS_DIR}/model.txt")
         threshold      = joblib.load(f"{MODELS_DIR}/threshold.pkl")
         encoders       = joblib.load(f"{MODELS_DIR}/encoders.pkl")
@@ -347,7 +345,7 @@ if page == "01 · Overview":
             <div class="metric-value">{pr_auc:.2f}</div>
             <div class="metric-delta">↑ validation set</div>
         </div>""", unsafe_allow_html=True)
-        
+
     st.markdown("<hr class='divider'>", unsafe_allow_html=True)
 
     col1, col2 = st.columns([3, 2])
@@ -394,11 +392,11 @@ if page == "01 · Overview":
     st.markdown('<div class="section-title">Pipeline</div>', unsafe_allow_html=True)
 
     steps = [
-        ("01", "Load",     "fraudTrain.csv\nfraudTest.csv",          "data_loader.py"),
-        ("02", "Engineer", "17 features\ndistance, time, amt z-score","preprocess.py"),
-        ("03", "Train",    "LightGBM\nscale_pos_weight",             "train.py"),
-        ("04", "Explain",  "SHAP TreeExplainer\nwaterfall plots",    "explain.py"),
-        ("05", "Serve",    "FastAPI\n/predict endpoint",             "api.py"),
+        ("01", "Load",     "fraudTrain.csv\nfraudTest.csv",           "data_loader.py"),
+        ("02", "Engineer", "17 features\ndistance, time, amt z-score", "preprocess.py"),
+        ("03", "Train",    "LightGBM\nscale_pos_weight",              "train.py"),
+        ("04", "Explain",  "SHAP TreeExplainer\nwaterfall plots",     "explain.py"),
+        ("05", "Serve",    "FastAPI\n/predict endpoint",              "api.py"),
     ]
 
     cols = st.columns(5)
@@ -552,26 +550,27 @@ elif page == "03 · Model Results":
     with c1:
         st.markdown(f"""<div class="metric-card">
             <div class="metric-label">Test Precision</div>
-            <div class="metric-value">{metrics.get('test_precision', 0.91):.1%}</div>
+            <div class="metric-value">{metrics.get('test_precision', 0.797):.1%}</div>
         </div>""", unsafe_allow_html=True)
     with c2:
         st.markdown(f"""<div class="metric-card">
             <div class="metric-label">Test Recall</div>
-            <div class="metric-value">{metrics.get('test_recall', 0.90):.1%}</div>
+            <div class="metric-value">{metrics.get('test_recall', 0.807):.1%}</div>
         </div>""", unsafe_allow_html=True)
     with c3:
         st.markdown(f"""<div class="metric-card">
             <div class="metric-label">F1 Score</div>
-            <div class="metric-value">{metrics.get('test_f1', 0.905):.3f}</div>
+            <div class="metric-value">{metrics.get('test_f1', 0.802):.3f}</div>
         </div>""", unsafe_allow_html=True)
     with c4:
         st.markdown(f"""<div class="metric-card">
             <div class="metric-label">PR-AUC</div>
-            <div class="metric-value">{metrics.get('val_pr_auc', 0.94):.2f}</div>
+            <div class="metric-value">{metrics.get('val_pr_auc', 0.939):.2f}</div>
         </div>""", unsafe_allow_html=True)
 
     st.markdown("<hr class='divider'>", unsafe_allow_html=True)
 
+    # ── PR curve + confusion matrix ──
     col1, col2 = st.columns(2)
     with col1:
         st.markdown("**Precision-Recall Curve**")
@@ -591,6 +590,43 @@ elif page == "03 · Model Results":
 
     st.markdown("<hr class='divider'>", unsafe_allow_html=True)
 
+    # ── Model selection ──
+    st.markdown('<div class="section-header">Model Selection</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Why LightGBM over Logistic Regression?</div>', unsafe_allow_html=True)
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("**ROC-AUC vs PR-AUC — Why metric choice matters**")
+        roc_pr_path = os.path.join(OUTPUTS, "roc_pr_comparison.png")
+        if os.path.exists(roc_pr_path):
+            st.image(Image.open(roc_pr_path), use_container_width=True)
+            st.caption(
+                "ROC-AUC looks optimistic for both models because the dataset is highly "
+                "imbalanced (0.58% fraud rate), making it easier to achieve a low false-positive "
+                "rate. PR-AUC tells the real story: how well does the model identify the rare fraud "
+                "cases?"
+            )
+        else:
+            st.info("Run train.py to generate ROC vs PR comparison")
+
+    with col2:
+        st.markdown("**LightGBM vs Logistic Regression (both at threshold 0.50)**")
+        model_comp_path = os.path.join(OUTPUTS, "model_comparison.png")
+        if os.path.exists(model_comp_path):
+            st.image(Image.open(model_comp_path), use_container_width=True)
+            st.caption(
+                "Logistic regression recall is reasonable but precision collapses — "
+                "it casts a wide net because it can only draw a linear decision boundary. "
+                "Fraud patterns are non-linear: the interaction between distance, "
+                "time, and amount can't be captured by a weighted sum."
+            )
+        else:
+            st.info("Run train.py to generate model comparison")
+
+    st.markdown("<hr class='divider'>", unsafe_allow_html=True)
+
+    # ── SHAP ──
     st.markdown('<div class="section-header">Explainability</div>', unsafe_allow_html=True)
     st.markdown('<div class="section-title">What drives fraud predictions?</div>', unsafe_allow_html=True)
 
@@ -609,6 +645,7 @@ elif page == "03 · Model Results":
 
     st.markdown("<hr class='divider'>", unsafe_allow_html=True)
 
+    # ── Waterfall cases ──
     st.markdown('<div class="section-header">Case Studies</div>', unsafe_allow_html=True)
     st.markdown('<div class="section-title">Explained fraud cases</div>', unsafe_allow_html=True)
 
@@ -631,7 +668,7 @@ elif page == "03 · Model Results":
 # ══════════════════════════════════════════════════════════════════════════════
 
 elif page == "04 · Try It Yourself":
-    
+
     st.markdown('<div class="section-header">Live Demo</div>', unsafe_allow_html=True)
     st.markdown('<div class="section-title">Try It Yourself</div>', unsafe_allow_html=True)
     st.markdown("<p style='color:#777;margin-bottom:2rem;'>Fill in transaction details below and the model will predict fraud probability in real time.</p>", unsafe_allow_html=True)

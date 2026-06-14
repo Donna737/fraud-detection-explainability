@@ -9,9 +9,11 @@ import seaborn as sns
 import mlflow
 import mlflow.lightgbm
 import lightgbm as lgb
+from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import (
-    precision_recall_curve, auc,
+    precision_recall_curve, roc_curve, auc,
     precision_score, recall_score,
     f1_score, confusion_matrix
 )
@@ -29,10 +31,8 @@ MODEL_PARAMS = {
     "n_jobs":          -1,
 }
 
-# business decision: catch at least 80% of fraud (min recall)
-# then maximize precision at that point to reduce false alarms
 MIN_RECALL  = 0.90
-VAL_SIZE    = 0.2     # 20% of train set used for threshold selection
+VAL_SIZE    = 0.2
 OUTPUTS_DIR = "outputs"
 MODELS_DIR  = "models"
 
@@ -62,7 +62,7 @@ def split_train_val(
         X_train, y_train,
         test_size=val_size,
         random_state=42,
-        stratify=y_train       # preserve fraud rate in both splits
+        stratify=y_train
     )
 
     logger.info(f"Train:      {X_tr.shape}  | fraud rate: {y_tr.mean():.4f}")
@@ -92,6 +92,34 @@ def train_model(X_train: pd.DataFrame, y_train: pd.Series) -> lgb.LGBMClassifier
     return model
 
 
+def train_baseline(X_train: pd.DataFrame, y_train: pd.Series):
+    """
+    Train logistic regression as a challenger/baseline model.
+    Requires scaling since LR is sensitive to feature magnitudes.
+    Uses class_weight='balanced' for imbalance correction.
+
+    Why logistic regression as baseline:
+        It's the simplest interpretable model — if LightGBM doesn't
+        meaningfully outperform it, the complexity isn't justified.
+        It also serves as a sanity check on the feature engineering.
+    """
+    logger.info("Training logistic regression baseline...")
+
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X_train)
+
+    lr = LogisticRegression(
+        class_weight="balanced",
+        max_iter=1000,
+        random_state=42,
+        n_jobs=-1
+    )
+    lr.fit(X_scaled, y_train)
+
+    logger.info("Baseline training complete.")
+    return lr, scaler
+
+
 # ── Threshold selection ────────────────────────────────────────────────────────
 
 def select_threshold(
@@ -110,11 +138,6 @@ def select_threshold(
         that's a form of optimization. Doing it on the test set would
         make our final metrics optimistic. The validation set is used
         for this tuning step; the test set is only touched once at the end.
-
-    Returns:
-        threshold   — the chosen operating threshold
-        pr_auc      — area under the precision-recall curve (on val)
-        precisions, recalls, thresholds — full curve for plotting
     """
     logger.info(f"Selecting threshold on validation set (min recall = {min_recall})...")
 
@@ -146,10 +169,7 @@ def evaluate(
     threshold: float,
     label: str = "tuned"
 ) -> tuple[dict, np.ndarray]:
-    """
-    Compute precision, recall, F1 at a given threshold.
-    Returns a dict of metrics and the predictions array.
-    """
+    """Compute precision, recall, F1 at a given threshold."""
     y_pred = (y_prob >= threshold).astype(int)
 
     metrics = {
@@ -196,7 +216,6 @@ def plot_pr_curve(
     """Precision-Recall curve with chosen threshold marked."""
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
 
-    # ── PR curve ──
     ax = axes[0]
     ax.plot(recalls, precisions, linewidth=2, color="steelblue",
             label=f"PR Curve (AUC = {pr_auc:.3f})")
@@ -220,7 +239,6 @@ def plot_pr_curve(
     ax.legend()
     ax.grid(alpha=0.3)
 
-    # ── F1 vs threshold ──
     ax = axes[1]
     f1_scores = (
         2 * (precisions[:-1] * recalls[:-1])
@@ -242,6 +260,138 @@ def plot_pr_curve(
         logger.info(f"PR curve saved to {save_path}")
 
     plt.show()
+
+
+def plot_roc_pr_comparison(
+    y_test: pd.Series,
+    y_test_prob_lgbm: np.ndarray,
+    y_test_prob_lr: np.ndarray,
+    save_path: str = None
+):
+    """
+    Side-by-side ROC-AUC vs PR-AUC for LightGBM and Logistic Regression.
+
+    Why this comparison matters:
+        ROC-AUC is misleading for imbalanced datasets — a model that
+        always predicts 'not fraud' can still score ~0.99 ROC-AUC
+        because the true negative rate dominates. PR-AUC focuses only
+        on the positive class (fraud) and is far more informative when
+        fraud rate is 0.58%. This plot makes that argument visually.
+    """
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+    # ── ROC curves ──
+    ax = axes[0]
+    for prob, label, color in [
+        (y_test_prob_lgbm, "LightGBM", "steelblue"),
+        (y_test_prob_lr,   "Logistic Regression (baseline)", "darkorange"),
+    ]:
+        fpr, tpr, _ = roc_curve(y_test, prob)
+        roc_auc = auc(fpr, tpr)
+        ax.plot(fpr, tpr, linewidth=2, color=color,
+                label=f"{label} (AUC = {roc_auc:.3f})")
+
+    ax.plot([0, 1], [0, 1], "k--", linewidth=1, label="Random classifier")
+    ax.set_xlabel("False Positive Rate")
+    ax.set_ylabel("True Positive Rate")
+    ax.set_title("ROC Curve — Misleading for Imbalanced Data")
+    ax.legend()
+    ax.grid(alpha=0.3)
+
+    # ── PR curves ──
+    ax = axes[1]
+    for prob, label, color in [
+        (y_test_prob_lgbm, "LightGBM", "steelblue"),
+        (y_test_prob_lr,   "Logistic Regression (baseline)", "darkorange"),
+    ]:
+        prec, rec, _ = precision_recall_curve(y_test, prob)
+        pr_auc = auc(rec, prec)
+        ax.plot(rec, prec, linewidth=2, color=color,
+                label=f"{label} (AUC = {pr_auc:.3f})")
+
+    baseline_rate = y_test.mean()
+    ax.axhline(y=baseline_rate, color="gray", linestyle="--", linewidth=1,
+           label=f"Random classifier — fraud rate in test set ({baseline_rate:.3f})")
+    ax.set_xlabel("Recall")
+    ax.set_ylabel("Precision")
+    ax.set_title("PR Curve — Better Metric for Fraud Detection")
+    ax.legend()
+    ax.grid(alpha=0.3)
+
+    plt.suptitle(
+        "ROC-AUC vs PR-AUC: Why metric choice matters at 0.58% fraud rate",
+        fontsize=12, fontweight="bold", y=1.02
+    )
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches="tight")
+        logger.info(f"ROC vs PR comparison saved to {save_path}")
+
+    plt.show()
+
+
+def plot_model_comparison(
+    y_test: pd.Series,
+    y_test_prob_lgbm: np.ndarray,
+    y_test_prob_lr: np.ndarray,
+    threshold: float,
+    save_path: str = None
+) -> pd.DataFrame:
+    """
+    Bar chart comparing LightGBM vs Logistic Regression at the same threshold.
+    Shows why the added complexity of LightGBM is justified.
+    """
+    metrics = {}
+    for prob, name in [
+        (y_test_prob_lgbm, "LightGBM"),
+        (y_test_prob_lr,   "Logistic Regression"),
+    ]:
+        y_pred = (prob >= 0.5).astype(int)
+        metrics[name] = {
+            "Precision": precision_score(y_test, y_pred),
+            "Recall":    recall_score(y_test, y_pred),
+            "F1":        f1_score(y_test, y_pred),
+        }
+
+    comparison_df = pd.DataFrame(metrics).T
+    logger.info("\n── Model Comparison (test set, same threshold) ──")
+    logger.info(comparison_df.round(3).to_string())
+
+    # plot
+    fig, ax = plt.subplots(figsize=(8, 5))
+    x = np.arange(len(comparison_df.columns))
+    width = 0.35
+
+    bars1 = ax.bar(x - width/2, comparison_df.loc["LightGBM"],
+                   width, label="LightGBM", color="steelblue")
+    bars2 = ax.bar(x + width/2, comparison_df.loc["Logistic Regression"],
+                   width, label="Logistic Regression (baseline)", color="darkorange",
+                   alpha=0.8)
+
+    for bar in bars1:
+        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01,
+                f"{bar.get_height():.3f}", ha="center", va="bottom", fontsize=9)
+    for bar in bars2:
+        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01,
+                f"{bar.get_height():.3f}", ha="center", va="bottom", fontsize=9)
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(comparison_df.columns)
+    ax.set_ylim(0, 1.1)
+    ax.set_ylabel("Score")
+    ax.set_title(f"LightGBM vs Logistic Regression (both at default threshold 0.50)")
+    ax.legend()
+    ax.grid(axis="y", alpha=0.3)
+
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches="tight")
+        logger.info(f"Model comparison saved to {save_path}")
+
+    plt.show()
+    return comparison_df
 
 
 def plot_confusion_matrix(
@@ -288,7 +438,6 @@ def save_model(model, threshold: float, features: list):
     """Save model, threshold, and feature list to disk."""
     os.makedirs(MODELS_DIR, exist_ok=True)
 
-    # save LightGBM model in native format — platform independent, no pickle
     model.booster_.save_model(f"{MODELS_DIR}/model.txt")
     joblib.dump(threshold, f"{MODELS_DIR}/threshold.pkl")
     joblib.dump(features,  f"{MODELS_DIR}/features.pkl")
@@ -326,8 +475,13 @@ def run_training(
         # ── split train → train + val ──
         X_tr, X_val, y_tr, y_val = split_train_val(X_train, y_train)
 
-        # ── fit model on train only ──
+        # ── fit LightGBM on train only ──
         model = train_model(X_tr, y_tr)
+
+        # ── fit logistic regression baseline on train only ──
+        lr_model, scaler = train_baseline(X_tr, y_tr)
+        joblib.dump(scaler, f"{MODELS_DIR}/lr_scaler.pkl")
+        joblib.dump(lr_model, f"{MODELS_DIR}/lr_model.pkl")
 
         # ── select threshold on validation set ──
         y_val_prob = model.predict_proba(X_val)[:, 1]
@@ -343,7 +497,7 @@ def run_training(
         mlflow.log_metric("val_f1",        val_metrics["f1"])
         mlflow.log_metric("threshold",     threshold)
 
-        # ── PR curve plot (from validation — where threshold was chosen) ──
+        # ── PR curve plot ──
         pr_path = f"{OUTPUTS_DIR}/pr_curve.png"
         plot_pr_curve(
             precisions, recalls, thresholds,
@@ -354,9 +508,12 @@ def run_training(
         mlflow.log_artifact(pr_path)
 
         # ── final honest evaluation on test set ──
-        # this is the first and only time we touch X_test
         logger.info("\n=== Final evaluation on held-out test set ===")
-        y_test_prob = model.predict_proba(X_test)[:, 1]
+        y_test_prob    = model.predict_proba(X_test)[:, 1]
+        y_test_prob_lr = lr_model.predict_proba(
+            scaler.transform(X_test)
+        )[:, 1]
+
         test_metrics, _ = evaluate(y_test, y_test_prob, threshold, label="test")
         compare_thresholds(y_test, y_test_prob, threshold)
 
@@ -364,7 +521,29 @@ def run_training(
         mlflow.log_metric("test_recall",    test_metrics["recall"])
         mlflow.log_metric("test_f1",        test_metrics["f1"])
 
-        # ── confusion matrix (on test set) ──
+        # ── ROC vs PR comparison plot ──
+        roc_pr_path = f"{OUTPUTS_DIR}/roc_pr_comparison.png"
+        plot_roc_pr_comparison(
+            y_test, y_test_prob, y_test_prob_lr,
+            save_path=roc_pr_path
+        )
+        mlflow.log_artifact(roc_pr_path)
+
+        # ── model comparison plot ──
+        model_comp_path = f"{OUTPUTS_DIR}/model_comparison.png"
+        comparison_df = plot_model_comparison(
+            y_test, y_test_prob, y_test_prob_lr,
+            threshold, save_path=model_comp_path
+        )
+        mlflow.log_artifact(model_comp_path)
+
+        # ── log baseline metrics ──
+        y_pred_lr = (y_test_prob_lr >= threshold).astype(int)
+        mlflow.log_metric("baseline_precision", precision_score(y_test, y_pred_lr))
+        mlflow.log_metric("baseline_recall",    recall_score(y_test, y_pred_lr))
+        mlflow.log_metric("baseline_f1",        f1_score(y_test, y_pred_lr))
+
+        # ── confusion matrix ──
         cm_path = f"{OUTPUTS_DIR}/confusion_matrix.png"
         plot_confusion_matrix(y_test, y_test_prob, threshold, save_path=cm_path)
         mlflow.log_artifact(cm_path)
@@ -375,7 +554,6 @@ def run_training(
 
         logger.info("=== Training run complete ===")
 
-    # return test probabilities — explain.py needs these
     return model, threshold, y_test_prob
 
 
