@@ -531,7 +531,7 @@ def run_training(
 
         # ── model comparison plot ──
         model_comp_path = f"{OUTPUTS_DIR}/model_comparison.png"
-        comparison_df = plot_model_comparison(
+        plot_model_comparison(
             y_test, y_test_prob, y_test_prob_lr,
             threshold, save_path=model_comp_path
         )
