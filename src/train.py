@@ -380,7 +380,7 @@ def plot_model_comparison(
     ax.set_xticklabels(comparison_df.columns)
     ax.set_ylim(0, 1.1)
     ax.set_ylabel("Score")
-    ax.set_title(f"LightGBM vs Logistic Regression (both at default threshold 0.50)")
+    ax.set_title("LightGBM vs Logistic Regression (both at default threshold 0.50)")
     ax.legend()
     ax.grid(axis="y", alpha=0.3)
 
